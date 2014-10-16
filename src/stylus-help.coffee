@@ -98,9 +98,9 @@ processData = (command,args) ->
           line_num
         }
 
-      preJsonChecks =  ->
+      preJsonChecks = ->
         for file in read_files
-          return data_next() unless /.styl/.test(file)
+          return /.styl/.test file
           data = fs.readFileSync file, 'utf8'
           data = data.split '\n'
 
@@ -312,8 +312,6 @@ processData = (command,args) ->
 
                   filesTotal[z_index] ?= []
                   filesTotal[z_index].push file
-
-                data_next()
 
           addFile file
 
