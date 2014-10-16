@@ -29,7 +29,7 @@ args = argv[1...argv.length]
 opts = optimist.argv
 
 # HELPER FUNCTIONS
-exit = (msg = 'bye') ->
+exit = (msg) ->
   log msg if msg
   process.exit()
 
@@ -38,41 +38,36 @@ log = (msg) ->
   c.log msg
 
 getPreSpaces = (str) ->
-  return str.match(/^(\s)*/)[0].length
+  str.match(/^(\s)*/)[0].length
 
 writeToLine = (file, line_str, line_num) ->
-  file_str = ''
   data = fs.readFileSync file,'utf8'
-  data = data.split('\n')
-  for line_number, line of data
-    end_line = ''
-    if line_number == "#{line_num-1}"
-      line = line_str
-    if "#{data.length - 1}" != line_number
-      end_line = '\n'
-    file_str += "#{line}#{end_line}"
-  fs.writeFileSync(file, file_str, 'utf8')
+  data = data.split '\n'
+
+  file_str = ''
+  for line, index of data
+    line = line_str if index is line_num - 1
+    end_line = '\n' unless index is data.length - 1
+    file_str += "#{line}#{end_line or ''}"
+  fs.writeFileSync file, file_str, 'utf8'
 
 alphabetize = (data) ->
   old_data = data.slice(0)
   data.sort()
   arrayEqual = (a, b) ->
-    a.length is b.length and a.every (elem, i) -> elem is b[i]
-  return not arrayEqual(old_data,data)
+    (a.length is b.length) and a.every (elem, i) -> elem is b[i]
+  not arrayEqual old_data, data
 
 getFiles = (args, next) ->
-  type = ''
-  return [] unless args.length
+  return [] unless args?.length
   stats = fs.statSync args[0]
 
   if stats.isDirectory()
-    type = 'directory'
     read_files = fs.readdirSync args[0]
     for key, val of read_files
       read_files[key] = args[0] + read_files[key]
 
   else if stats.isFile()
-    type = 'file'
     read_files = [args[0]]
 
   return read_files
@@ -80,6 +75,7 @@ getFiles = (args, next) ->
 # COMMAND LINE STUFF
 processData = (command,args) ->
   read_files = getFiles args
+
   switch command
     when 'simple_lint'
       config = args[1]
@@ -104,185 +100,194 @@ processData = (command,args) ->
 
       preJsonChecks =  ->
         for file in read_files
-          if not (/.styl/.test(file))
-            data_next()
-            return
-
+          return data_next() unless /.styl/.test(file)
           data = fs.readFileSync file, 'utf8'
-          data = data.split('\n')
+          data = data.split '\n'
+
           for line, line_num in data
+            {bad_indent, comment_space, zero_px} = config or {}
 
             # bad_indent
-            if config.bad_indent
+            if bad_indent
               spaces = getPreSpaces(line)
-              if (spaces % 2) isnt 0
-                addError config?.bad_indent, line, (line_num + 1)
+              if spaces % 2
+                addError bad_indent, line, line_num + 1
 
             # comment_space
-            if config?.comment_space
+            if comment_space
               check_1 = /^\s*\/\//.test line
               check_2 =  /\/\/\s/.test line
-              if check_1 and !check_2
-                addError config?.comment_space, line, (line_num + 1)
+              unless check_1 and check_2
+                addError comment_space, line, line_num + 1
 
             # zero_px
-            if config.zero_px
+            if zero_px
               if /\s0px/.test line
-                addError config.zero_px, line, (line_num + 1)
+                addError zero_px, line, line_num + 1
 
       postJsonChecks =  ->
-        data = processData 'convertStyleToJson',args
+        data = processData 'convertStyleToJson', args
         stylus_stags = []
         total_tags = {}
+
+        config ?= {}
+        {star_select, style_attribute_check, no_colon_semicolon} = config
+        {comma_space, dupe_tag_check} = config
+
         for file_name, file of data
           for line_num, attribute_info of file
-            if attribute_info.tag == ''
-              continue
-            line = parseInt(line_num, 10)
-            total_tags[attribute_info.tag]?= []
-            total_tags[attribute_info.tag].push (line - 1)
+            continue if attribute_info.tag is ''
+            line = parseInt line_num, 10
+            total_tags[attribute_info.tag] ?= []
+            total_tags[attribute_info.tag].push line - 1
 
             # star_selector
-            if config.star_selector
+            if star_selector
               if /\*/.test attribute_info.tag
-                addError config.star_selector, attribute_info.tag, (line_num)
+                addError star_selector, attribute_info.tag, line_num
 
-            for attribute, key in attribute_info.rules
+            for attribute, index in attribute_info.rules
+              line_num = line + index - 1
 
               # invalid attribute check
-              if config.style_attribute_check
-                att = attribute.trim()
-                pair = att.split(' ')
-                if pair?.length == 2 and valid_selectors[pair[0]]
-                  if pair[1] not in valid_selectors[pair[0]]
-                    s_ac = config.style_attribute_check
-                    addError s_ac, attribute, (line + key - 1)
+              if style_attribute_check
+                pair = attribute.trim().split ' '
+                if pair?.length is 2 and valid_selectors[pair[0]]
+                  unless pair[1] in valid_selectors[pair[0]]
+                    s_ac = style_attribute_check
+                    addError s_ac, attribute, line_num
 
               # semi colon check
-              if config.no_colon_semicolon
+              if no_colon_semicolon
                 if /;|:/.test attribute
-                  addError config.no_colon_semicolon, attribute, (line + key - 1)
-
+                  addError no_colon_semicolon, attribute, line_num
 
               # comma space check
-              if config.comma_space
+              if comma_space
                 check_1 = attribute.match /,/g
-                check_2 =  attribute.match /,\s/g
-                if check_1?.length != check_2?.length
-                  addError config.comma_space, attribute, (line + key - 1)
+                check_2 = attribute.match /,\s/g
+                unless check_1?.length is check_2?.length
+                  addError comma_space, attribute, line_num
 
-        if config.dupe_tag_check
+        if dupe_tag_check
           for tag, arr of total_tags
-            if arr.length > 1
-              lines = arr.join ','
-              for dupe, index in arr
-                addError config.dupe_tag_check, tag, dupe
+            continue unless arr.length > 1
+            for dupe, index in arr
+              addError dupe_tag_check, tag, dupe
 
       alphabetizeCheck = ->
         if config.alphabetize_check
-          return_data = processData 'checkAlphabetized',args
+          return_data = processData 'checkAlphabetized', args
           return_data.infractions ?= []
           for infraction, key in return_data.infractions
-            a_c = config.alphabetize_check
-            i_l = infraction.line
-            i_ln = infraction.line_number
-            addError a_c, i_l, i_ln
+            {line, line_number} = infraction or {}
+            {alphabetize_check} = config or {}
+            addError alphabetize_check, line, line_number
 
       preJsonChecks()
       postJsonChecks()
       alphabetizeCheck()
 
       return errors
+
     when 'checkAlphabetized'
-      return_data = null
+      infractions = []
       data = processData 'convertStyleToJson',args
       for file_name, file of data
         for tag, attribute_info of file
-          if (alphabetize(attribute_info.rules))
-            return_data ?= {
-              alphabetized: false
-              infractions: []
-            }
-            return_data.infractions.push {
-              line_number: tag
-              line: attribute_info.rules[0]
-              file_name
-            }
-      return_data ?= {
-        alphabetized: true
-      }
-      return return_data
+          {rules} = attribute_info
+          continue unless alphabetize rules
+          infractions.push {
+            line_number: tag
+            line: rules[0]
+            file_name
+          }
+
+      return {alphabetized: false, infractions} if infractions.length
+      return {alphabetized: true}
+
     when 'alphabetizeStyle'
       data = processData 'convertStyleToJson', args
       for file_name, file of data
-        for index, attribute_info of file
-          if (alphabetize(attribute_info.rules))
-            space_num = attribute_info.indent
-            spaces = Array(parseInt(space_num + 1)).join ' '
-            for attr, line_num in attribute_info.rules
-              line = parseInt(index,10) + parseInt(line_num,10)
-              writeToLine(file_name,"#{spaces}#{attr}",line)
+        for attribute_info, index in file
+          {rules, indent} = attribute_info
+          if alphabetize rules
+            spaces = Array(indent + 1).join ' '
+            for attr, line_num in rules
+              line = index + line_num
+              writeToLine file_name, "#{spaces}#{attr}", line
       return processData 'checkAlphabetized', args
 
     when 'convertStyleToJson'
 
-      # a,b  d,c
-      # a.d, a.c , b.d, b.c
-      join = (data_1, data_2) ->
-        arr_1 = data_1.split(',')
-        arr_2 = data_2.split(',')
-        str = []
-        for arg1 in arr_1
-          for arg2 in arr_2
-            str.push("#{arg1.trim()} #{arg2.trim()}")
-        return str.join(', ')
-
       total_return = {}
       processed = 0
 
-      for file in read_files
-        obj = {}
-        if not (/.styl/.test(file))
-          continue
+      # a,b  d,c
+      # a.d, a.c , b.d, b.c
+      join = (data_1, data_2) ->
+        arr_1 = data_1.split ','
+        arr_2 = data_2.split ','
+        str = []
+        for arg1 in arr_1
+          for arg2 in arr_2
+            str.push "#{arg1.trim()} #{arg2.trim()}"
+        return str.join(', ')
 
-        data = fs.readFileSync file,'utf8', (err, data) ->
+      for file in read_files
+        continue unless /.styl/.test file
+
+        obj = {}
+        line_test = ///
+          ((\n|^)(\s)*(\.|&|>|\#|@media).+)|(\n|^)(\s)*(table|td|th|tr|div|
+          span|a|h1|h2|h3|h4|h5|h6|strong|em|quote|form|fieldset|label|input|
+          textarea|button|body|img|ul|li|html|object|iframe|p|blockquote|
+          abbr|address|cite|del|dfn|ins|kbd|q|samp|sup|var|b|i|dl|dt|dd|ol|
+          legend|caption|tbody|tfoot|thead|article|aside|canvas|details|
+          figcaption|figure|footer|header|hgroup|menu|nav|section|summary|
+          time|mark|audio|video)(,| |\.|$).*
+        ///
+
+        data = fs.readFileSync file, 'utf8'
         data = data.split('\n')
         tagFound = false
         attributeSet = []
         tag = ''
         indent = 0
-        for line_num, line of data
-          if line.match(/^\s*$/)
-            continue
-          if line.match(/((\n|^)(\s)*(\.|&|>|#|@media).+)|(\n|^)(\s)*(table|td|th|tr|div|span|a|h1|h2|h3|h4|h5|h6|strong|em|quote|form|fieldset|label|input|textarea|button|body|img|ul|li|html|object|iframe|p|blockquote|abbr|address|cite|del|dfn|ins|kbd|q|samp|sup|var|b|i|dl|dt|dd|ol|legend|caption|tbody|tfoot|thead|article|aside|canvas|details|figcaption|figure|footer|header|hgroup|menu|nav|section|summary|time|mark|audio|video)(,| |\.|$).*/)
+
+        for line, line_num of data
+          continue if line.match /^\s*$/
+
+          if line.match line_test
             tagFound = true
 
             if attributeSet.length
-              line_number = parseInt(line_num, 10) + 1 - attributeSet.length
-              obj[line_number]= {indent, rules: attributeSet}
-              obj[line_number].tag = tag.trim()
+              line_number = line_num + 1 - attributeSet.length
+              obj[line_number] = {
+                indent
+                rules: attributeSet
+                tag: tag.trim()
+              }
 
-              attributeSet = []
-              indent = 0
-
-            if getPreSpaces(line) > getPreSpaces(tag)
-              tag = join(tag, line.trim())
+            if getPreSpaces line > getPreSpaces tag
+              tag = join tag, line.trim()
             else
               tag = line
 
           else if tagFound
-            pre_spaces = getPreSpaces(line)
-            if indent == 0
-              indent = pre_spaces
-              if indent == 0
-                continue
+            pre_spaces = getPreSpaces line
+            indent = pre_spaces unless indent
+            continue unless indent
 
-            if indent == pre_spaces
-              attributeSet.push("#{line.trim()}")
+            if indent is pre_spaces
+              attributeSet.push "#{line.trim()}"
             else
-              line_number = parseInt(line_num, 10) - attributeSet.length
-              obj[line_number]= {indent, rules: attributeSet}
-              obj[line_number].tag = tag.trim()
+              line_number = line_num - attributeSet.length
+              obj[line_number] = {
+                indent
+                rules: attributeSet
+                tag: tag.trim()
+              }
               tag = ''
               attributeSet = []
               indent = 0
@@ -297,58 +302,57 @@ processData = (command,args) ->
         filesTotal = {}
         for file in read_files
           addFile = (file) ->
-            if /.styl/.test(file)
+            if /.styl/.test file
               data = fs.readFileSync "#{file}",'utf8'
-              arr = data.match(/(z-index:? +)([0-9]+)/g)
+              arr = data.match /(z-index:? +)([0-9]+)/g
               if arr?.length
                 for val in arr
-                  val = val.match(/(z-index:? +)([0-9]+)/)
-                  z_index = parseInt(val[2],10)
+                  val = val.match /(z-index:? +)([0-9]+)/
+                  z_index = parseInt val[2],10
 
                   filesTotal[z_index] ?= []
-                  filesTotal[z_index].push(file)
+                  filesTotal[z_index].push file
+
                 data_next()
-          addFile(file)
-      return generateJson(filesTotal)
+
+          addFile file
+
+      generateJson filesTotal
 
     # Normalize z index values
     when 'normalizeZvalues'
       sizeOf = (obj) ->
         size = 0
-        for key, val of obj
-          size++
-        return size;
+        size++ for key, val of obj
+        return size
 
       filesTotal = processData 'inspectZValues', args
       count = null
-      breathing_room = args[1]
-      breathing_room ?= 10
+      breathing_room = args[1] or 10
       for z_index, files of filesTotal
-        z_index = parseInt(z_index,10)
-        count ?= Math.min(z_index,1)
-        if z_index != count
+        z_index = parseInt z_index,10
+        count ?= Math.min z_index,1
+        unless z_index is count
           for file in files
-            buf = fs.readFileSync("#{file}", 'utf8')
-            reg = new RegExp("z-index:? +#{z_index}\n",'g')
+            buf = fs.readFileSync "#{file}", 'utf8'
+            reg = new RegExp "z-index:? +#{z_index}\n",'g'
             buf = buf.replace reg, "z-index #{count}\n"
-            fs.writeFileSync("#{file}", buf, 'utf8')
+            fs.writeFileSync "#{file}", buf, 'utf8'
 
         count += breathing_room
       filesTotal = processData 'inspectZValues', args
       return filesTotal
-
     else
       return false
 
 # Support for command line stuff
-if (/stylus-help/.test module?.parent?.filename)
-  value = processData command, args
-  if value
-    value = JSON.stringify(value,null,3)
-    log value
-  else
-    log "invalid command #{command}"
-    log USAGE
+if /stylus-help/.test module?.parent?.filename
+  if value = processData command, args
+    value = JSON.stringify value,null,3
+    return log value
+
+  log "invalid command #{command}"
+  log USAGE
 
 # support for require
 exports.processData = processData
