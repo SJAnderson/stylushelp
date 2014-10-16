@@ -3,6 +3,12 @@
       "name": "Jason Gornall",
       "email": "gornall.jason@gmail.com"
   },
+  "contributors": [
+    {
+      "name": "Steven Anderson",
+      "email": "steven@sjanderson.org"
+    }
+  ],
   "main": "./lib/stylus-help",
   "bin": {
     "stylus-help": "./bin/stylus-help"
